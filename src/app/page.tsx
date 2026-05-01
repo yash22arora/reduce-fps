@@ -2,57 +2,63 @@
 
 import { useState, useRef, ChangeEvent, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Upload, Video, Play, Download, Settings2, Loader2, ArrowRight } from 'lucide-react';
+import { Upload, Video, Play, Download, Settings2, Loader2, ArrowRight, ShieldCheck } from 'lucide-react';
+import { FFmpeg } from '@ffmpeg/ffmpeg';
+import { fetchFile, toBlobURL } from '@ffmpeg/util';
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [uploadedPath, setUploadedPath] = useState<string>('');
-  const [fileId, setFileId] = useState<string>('');
   const [fileName, setFileName] = useState<string>('');
 
   const [targetFps, setTargetFps] = useState<number>(6);
 
-  const [status, setStatus] = useState<"idle" | "uploading" | "processing" | "done" | "error">("idle");
+  const [status, setStatus] = useState<"idle" | "loading_ffmpeg" | "processing" | "done" | "error">("loading_ffmpeg");
   const [errorMessage, setErrorMessage] = useState<string>('');
+  const [progress, setProgress] = useState<number>(0);
 
   const [outputPath, setOutputPath] = useState<string>('');
   const [outputFileName, setOutputFileName] = useState<string>('');
   const [outputFileSize, setOutputFileSize] = useState<number | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const isDownloadingRef = useRef<boolean>(false);
+  const ffmpegRef = useRef<FFmpeg | null>(null);
 
   useEffect(() => {
-    const handleBeforeUnload = () => {
-      if (fileId && !isDownloadingRef.current) {
-        fetch('/api/cleanup', {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fileId }),
-          keepalive: true
-        }).catch(console.error);
+    const loadFFmpeg = async () => {
+      setStatus("loading_ffmpeg");
+      try {
+        const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.10/dist/umd';
+        const ffmpeg = new FFmpeg();
+        ffmpegRef.current = ffmpeg;
+
+        ffmpeg.on('progress', ({ progress }) => {
+          // ffmpeg.wasm progress goes from 0 to 1
+          setProgress(Math.round(progress * 100));
+        });
+
+        await ffmpeg.load({
+          coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+          wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+        });
+
+        setStatus("idle");
+      } catch (err: any) {
+        console.error("FFmpeg Load Error:", err);
+        setErrorMessage("Failed to load FFmpeg engine. Please refresh.");
+        setStatus("error");
       }
     };
 
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [fileId]);
+    loadFFmpeg();
+  }, []);
 
-  const cleanupCurrentSession = async () => {
-    if (fileId) {
-      try {
-        await fetch('/api/cleanup', {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fileId })
-        });
-      } catch (err) {
-        console.error('Cleanup failed:', err);
-      }
-    }
+  const cleanupCurrentSession = () => {
+    if (uploadedPath) URL.revokeObjectURL(uploadedPath);
+    if (outputPath) URL.revokeObjectURL(outputPath);
   };
 
-  const handleFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const selectedFile = e.target.files[0];
 
@@ -69,67 +75,57 @@ export default function Home() {
 
       setFile(selectedFile);
       setErrorMessage('');
-      await uploadVideo(selectedFile);
-    }
-  };
-
-  const uploadVideo = async (selectedFile: File) => {
-    setStatus("uploading");
-    try {
-      const formData = new FormData();
-      formData.append('file', selectedFile);
-
-      const res = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.error || 'Upload failed');
-      }
-
-      const data = await res.json();
-      setFileId(data.fileId);
-      setUploadedPath(data.filePath);
-      setFileName(data.fileName);
+      cleanupCurrentSession();
+      setUploadedPath(URL.createObjectURL(selectedFile));
+      setFileName(selectedFile.name);
       setStatus("idle");
-    } catch (err: any) {
-      setErrorMessage(err.message || "Failed to upload video.");
-      setStatus("error");
     }
   };
 
   const handleConvert = async () => {
-    if (!fileId || !fileName) return;
+    if (!file || !fileName || !ffmpegRef.current) return;
 
     setStatus("processing");
+    setProgress(0);
     setErrorMessage('');
 
     try {
-      const res = await fetch('/api/convert', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          fileId,
-          fileName,
-          targetFps
-        }),
-      });
+      const ffmpeg = ffmpegRef.current;
+      const ext = fileName.substring(fileName.lastIndexOf('.'));
+      const inputName = `input${ext}`;
+      const outputName = 'output.mp4';
 
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.error || 'Conversion failed');
-      }
+      await ffmpeg.writeFile(inputName, await fetchFile(file));
 
-      const data = await res.json();
-      setOutputPath(data.outputPath);
-      setOutputFileName(data.outputFileName);
-      setOutputFileSize(data.outputSize);
+      await ffmpeg.exec([
+        '-y',
+        '-i', inputName,
+        '-vf', `fps=${targetFps}`,
+        '-c:v', 'libx264',
+        '-pix_fmt', 'yuv420p',
+        '-an',
+        outputName
+      ]);
+
+      const data = await ffmpeg.readFile(outputName);
+
+      // Depending on version, data could be Uint8Array or Buffer
+      // @ts-ignore
+      const videoBlob = new Blob([data.buffer || data], { type: 'video/mp4' });
+      const url = URL.createObjectURL(videoBlob);
+
+      setOutputPath(url);
+
+      // Construct output filename
+      const baseName = fileName.lastIndexOf('.') > 0 ? fileName.substring(0, fileName.lastIndexOf('.')) : fileName;
+      setOutputFileName(`${baseName}_${targetFps}fps.mp4`);
+
+      // @ts-ignore
+      setOutputFileSize(data.byteLength || data.length);
+
       setStatus("done");
     } catch (err: any) {
+      console.error(err);
       setErrorMessage(err.message || "Failed to convert video.");
       setStatus("error");
     }
@@ -144,7 +140,7 @@ export default function Home() {
           className="inline-flex items-center gap-3 px-4 py-2 rounded-full border border-[var(--border)] bg-[var(--card)]"
         >
           <div className="w-2 h-2 rounded-full bg-[var(--neon-cyan)] neon-glow animate-pulse" />
-          <span className="text-sm font-medium tracking-widest uppercase text-zinc-400">ChronoFrame Engine</span>
+          <span className="text-sm font-medium tracking-widest uppercase text-zinc-400">ChronoFrame</span>
         </motion.div>
         <motion.h1
           initial={{ opacity: 0, y: -20 }}
@@ -152,7 +148,7 @@ export default function Home() {
           transition={{ delay: 0.1 }}
           className="text-5xl md:text-7xl font-bold tracking-tighter"
         >
-          Manipulate <span className="text-transparent bg-clip-text bg-gradient-to-r from-[var(--neon-cyan)] to-[var(--neon-pink)]">Time</span>
+          FPS <span className="text-transparent bg-clip-text bg-gradient-to-r from-[var(--neon-cyan)] to-[var(--neon-pink)]">Transcoder</span>
         </motion.h1>
         <motion.p
           initial={{ opacity: 0 }}
@@ -160,8 +156,19 @@ export default function Home() {
           transition={{ delay: 0.2 }}
           className="text-zinc-400 max-w-lg text-balance"
         >
-          Upload any video and process its frame rate with absolute precision locally.
+          Locally transcode video files to a custom frame rate using WebAssembly. Secure, fast, and completely client-side.
         </motion.p>
+
+        {/* Privacy Shield */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.3 }}
+          className="flex items-start justify-center gap-3 mt-4 px-4 py-3 bg-green-500/10 border border-green-500/20 text-green-400 rounded-lg text-sm max-w-xl"
+        >
+          <ShieldCheck className="w-5 h-5 shrink-0 mt-0.5" />
+          <span className="text-left"><strong>End-to-End Privacy:</strong> All transcoding is executed locally via WebAssembly. Your files are never uploaded to an external server.</span>
+        </motion.div>
       </header>
 
       {errorMessage && (
@@ -170,8 +177,16 @@ export default function Home() {
         </div>
       )}
 
+      {/* Loading Engine State */}
+      {status === "loading_ffmpeg" && (
+        <div className="flex flex-col items-center justify-center py-20 gap-4">
+          <Loader2 className="w-12 h-12 animate-spin text-[var(--neon-cyan)]" />
+          <p className="text-zinc-400 animate-pulse">Initializing WebAssembly Transcoding Core...</p>
+        </div>
+      )}
+
       {/* Upload Section */}
-      {!file && status !== "uploading" && (
+      {!file && status === "idle" && (
         <motion.div
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -185,8 +200,8 @@ export default function Home() {
               <Upload className="w-8 h-8 text-zinc-400 group-hover:text-[var(--neon-cyan)] transition-colors" />
             </div>
             <div>
-              <h3 className="text-xl font-medium mb-2">Initialize Sequence</h3>
-              <p className="text-zinc-500 text-sm">Drag & drop or click to upload MP4, MOV, WEBM (Max 100MB)</p>
+              <h3 className="text-xl font-medium mb-2">Select Media File</h3>
+              <p className="text-zinc-500 text-sm">Drag & drop or browse for MP4, MOV, or WEBM (Max 100MB payload)</p>
             </div>
             <input
               type="file"
@@ -199,15 +214,8 @@ export default function Home() {
         </motion.div>
       )}
 
-      {(status === "uploading") && (
-        <div className="flex flex-col items-center justify-center py-20 gap-4">
-          <Loader2 className="w-12 h-12 animate-spin text-[var(--neon-cyan)]" />
-          <p className="text-zinc-400 animate-pulse">Uploading video to secure local buffer...</p>
-        </div>
-      )}
-
       {/* Main Workspace */}
-      {file && uploadedPath && status !== "uploading" && (
+      {file && uploadedPath && status !== "loading_ffmpeg" && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -220,18 +228,17 @@ export default function Home() {
               <div className="flex items-center justify-between">
                 <h2 className="text-xl font-semibold flex items-center gap-2">
                   <Video className="w-5 h-5 text-[var(--neon-cyan)]" />
-                  Original Stream
+                  Source Media
                 </h2>
                 <div className="flex items-center gap-2">
                   <span className="px-3 py-1 text-xs rounded-full bg-zinc-800 text-zinc-300">
                     {(file.size / (1024 * 1024)).toFixed(2)} MB
                   </span>
                   <button
-                    onClick={async () => {
-                      await cleanupCurrentSession();
+                    onClick={() => {
+                      cleanupCurrentSession();
                       setFile(null);
                       setUploadedPath('');
-                      setFileId('');
                       setFileName('');
                       setOutputPath('');
                       setOutputFileName('');
@@ -248,7 +255,7 @@ export default function Home() {
 
               <div className="glass-panel rounded-xl overflow-hidden aspect-video relative group">
                 <video
-                  src={`/api/video?path=${encodeURIComponent(uploadedPath)}`}
+                  src={uploadedPath}
                   controls
                   className="w-full h-full object-contain bg-black/50"
                 />
@@ -283,18 +290,18 @@ export default function Home() {
                     {status === "processing" ? (
                       <>
                         <Loader2 className="w-5 h-5 animate-spin" />
-                        Processing
+                        Processing...
                       </>
                     ) : (
                       <>
                         <Play className="w-5 h-5" fill="currentColor" />
-                        Execute Conversion
+                        Begin Transcoding
                       </>
                     )}
                   </button>
                 </div>
               </div>
-              <p className="text-xs text-zinc-500 text-center -mt-2">Note: Audio will be removed to prevent desync.</p>
+              <p className="text-xs text-zinc-500 text-center -mt-2">Note: Audio tracks are automatically stripped to prevent frame synchronization anomalies.</p>
             </div>
 
             {/* Right Column: Output */}
@@ -302,7 +309,7 @@ export default function Home() {
               <div className="flex items-center justify-between">
                 <h2 className="text-xl font-semibold flex items-center gap-2">
                   <ArrowRight className="w-5 h-5 text-[var(--neon-pink)]" />
-                  Processed Stream
+                  Transcoded Output
                 </h2>
                 <div className="flex items-center gap-2">
                   {outputFileSize && (
@@ -318,17 +325,24 @@ export default function Home() {
                 </div>
               </div>
 
-              <div className="glass-panel rounded-xl overflow-hidden aspect-video relative flex items-center justify-center">
+              <div className="glass-panel rounded-xl overflow-hidden aspect-video relative flex items-center justify-center p-4">
                 {status === "idle" || status === "error" ? (
-                  <p className="text-zinc-600 font-medium">Awaiting execution...</p>
+                  <p className="text-zinc-600 font-medium text-center">Awaiting source media...</p>
                 ) : status === "processing" ? (
-                  <div className="flex flex-col items-center gap-4">
-                    <div className="w-16 h-16 rounded-full border-4 border-zinc-800 border-t-[var(--neon-cyan)] animate-spin" />
-                    <p className="text-[var(--neon-cyan)] animate-pulse font-medium">Transcoding Engine Active</p>
+                  <div className="flex flex-col items-center justify-center w-full max-w-xs mx-auto gap-4">
+                    <div className="w-16 h-16 rounded-full border-4 border-zinc-800 border-t-[var(--neon-cyan)] animate-spin mb-2" />
+                    <p className="text-[var(--neon-cyan)] animate-pulse font-medium text-center">Transcoding in Progress</p>
+                    <div className="w-full bg-zinc-800 rounded-full h-2.5 overflow-hidden">
+                      <div
+                        className="bg-gradient-to-r from-[var(--neon-cyan)] to-[var(--neon-pink)] h-full transition-all duration-300"
+                        style={{ width: `${progress}%` }}
+                      ></div>
+                    </div>
+                    <p className="text-xs text-zinc-400 font-mono text-center">{progress}% Complete</p>
                   </div>
                 ) : status === "done" && outputPath ? (
                   <video
-                    src={`/api/video?path=${encodeURIComponent(outputPath)}`}
+                    src={outputPath}
                     controls
                     className="w-full h-full object-contain bg-black/50"
                   />
@@ -344,17 +358,12 @@ export default function Home() {
                     className="w-full"
                   >
                     <a
-                      href={`/api/download?path=${encodeURIComponent(outputPath)}`}
+                      href={outputPath}
                       download={outputFileName}
-                      onClick={() => {
-                        isDownloadingRef.current = true;
-                        // Reset after a short delay to re-enable cleanup for actual unloads
-                        setTimeout(() => { isDownloadingRef.current = false; }, 2000);
-                      }}
                       className="w-full py-4 rounded-lg font-bold flex items-center justify-center gap-2 bg-gradient-to-r from-[var(--neon-cyan)] to-[var(--neon-pink)] text-white hover:opacity-90 transition-opacity shadow-[0_0_15px_rgba(0,240,255,0.3)]"
                     >
                       <Download className="w-5 h-5" />
-                      Acquire Output File
+                      Download Output
                     </a>
                   </motion.div>
                 )}
