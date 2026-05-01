@@ -8,7 +8,7 @@
   --color-accent: var(--accent);
   --color-accent-hover: var(--accent-hover);
   --color-neon-cyan: var(--neon-cyan);
-  --color-neon-pink: var(--neon-pink);
+  --color-neon-yellow: var(--neon-yellow);
   
   --font-sans: var(--font-inter);
   --font-mono: var(--font-geist-mono);
@@ -22,7 +22,7 @@
   --accent: #00f0ff;
   --accent-hover: #33f3ff;
   --neon-cyan: #00f0ff;
-  --neon-pink: #ff0055;
+  --neon-yellow: #ffea00;
   --font-inter: 'Inter', sans-serif;
 }
 
@@ -32,7 +32,7 @@ body {
   font-family: var(--font-sans);
   background-image: 
     radial-gradient(circle at 15% 50%, rgba(0, 240, 255, 0.05), transparent 25%),
-    radial-gradient(circle at 85% 30%, rgba(255, 0, 85, 0.05), transparent 25%);
+    radial-gradient(circle at 85% 30%, rgba(255, 234, 0, 0.05), transparent 25%);
   background-attachment: fixed;
   min-height: 100vh;
 }
