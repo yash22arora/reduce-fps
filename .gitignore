@@ -42,3 +42,9 @@ next-env.d.ts
 
 # generated strategy documents
 /docs
+
+# agents
+/.agents
+
+# local database schema
+supabase_schema.sql
