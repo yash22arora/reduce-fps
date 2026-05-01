@@ -257,6 +257,8 @@ export default function Home() {
                 <video
                   src={uploadedPath}
                   controls
+                  controlsList="nodownload"
+                  onContextMenu={(e) => e.preventDefault()}
                   className="w-full h-full object-contain bg-black/50"
                 />
               </div>
@@ -344,6 +346,8 @@ export default function Home() {
                   <video
                     src={outputPath}
                     controls
+                    controlsList="nodownload"
+                    onContextMenu={(e) => e.preventDefault()}
                     className="w-full h-full object-contain bg-black/50"
                   />
                 ) : null}
