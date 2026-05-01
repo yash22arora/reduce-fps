@@ -16,8 +16,19 @@ export default function Home() {
   const [status, setStatus] = useState<"idle" | "loading_ffmpeg" | "processing" | "done" | "error">("loading_ffmpeg");
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [progress, setProgress] = useState<number>(0);
+  const [progressLabel, setProgressLabel] = useState<string>('');
 
   const [outputPath, setOutputPath] = useState<string>('');
+
+  useEffect(() => {
+    if (status === 'processing') {
+      if (progress === 0) setProgressLabel('Allocating WASM Memory...');
+      else if (progress < 15) setProgressLabel('Analyzing Source Media...');
+      else if (progress < 85) setProgressLabel('Transcoding Frames...');
+      else if (progress < 99) setProgressLabel('Muxing MP4 Container...');
+      else setProgressLabel('Finalizing Video Object...');
+    }
+  }, [progress, status]);
   const [outputFileName, setOutputFileName] = useState<string>('');
   const [outputFileSize, setOutputFileSize] = useState<number | null>(null);
 
@@ -87,6 +98,7 @@ export default function Home() {
 
     setStatus("processing");
     setProgress(0);
+    setProgressLabel('Allocating WASM Memory...');
     setErrorMessage('');
 
     try {
@@ -96,6 +108,7 @@ export default function Home() {
       const outputName = 'output.mp4';
 
       await ffmpeg.writeFile(inputName, await fetchFile(file));
+      setProgressLabel('Booting Transcoding Engine...');
 
       await ffmpeg.exec([
         '-y',
@@ -107,8 +120,11 @@ export default function Home() {
         outputName
       ]);
 
+      setProgressLabel('Extracting Output Stream...');
+
       const data = await ffmpeg.readFile(outputName);
 
+      setProgressLabel('Constructing Output Blob...');
       // Depending on version, data could be Uint8Array or Buffer
       // @ts-ignore
       const videoBlob = new Blob([data.buffer || data], { type: 'video/mp4' });
@@ -139,7 +155,7 @@ export default function Home() {
           animate={{ opacity: 1, y: 0 }}
           className="inline-flex items-center gap-3 px-4 py-2 rounded-full border border-[var(--border)] bg-[var(--card)]"
         >
-          <div className="w-2 h-2 rounded-full bg-[var(--neon-cyan)] neon-glow animate-pulse" />
+          <div className="w-2 h-2 rounded-full bg-neon-cyan neon-glow animate-pulse" />
           <span className="text-sm font-medium tracking-widest uppercase text-zinc-400">ChronoFrame</span>
         </motion.div>
         <motion.h1
@@ -148,7 +164,7 @@ export default function Home() {
           transition={{ delay: 0.1 }}
           className="text-5xl md:text-7xl font-bold tracking-tighter"
         >
-          FPS <span className="text-transparent bg-clip-text bg-gradient-to-r from-[var(--neon-cyan)] to-[var(--neon-pink)]">Transcoder</span>
+          FPS <span className="text-transparent bg-clip-text bg-gradient-to-r from-neon-cyan to-neon-yellow">Transcoder</span>
         </motion.h1>
         <motion.p
           initial={{ opacity: 0 }}
@@ -180,7 +196,7 @@ export default function Home() {
       {/* Loading Engine State */}
       {status === "loading_ffmpeg" && (
         <div className="flex flex-col items-center justify-center py-20 gap-4">
-          <Loader2 className="w-12 h-12 animate-spin text-[var(--neon-cyan)]" />
+          <Loader2 className="w-12 h-12 animate-spin text-neon-cyan" />
           <p className="text-zinc-400 animate-pulse">Initializing WebAssembly Transcoding Core...</p>
         </div>
       )}
@@ -194,10 +210,10 @@ export default function Home() {
         >
           <div
             onClick={() => fileInputRef.current?.click()}
-            className="glass-panel p-12 rounded-2xl border-dashed border-2 hover:border-[var(--neon-cyan)] transition-colors cursor-pointer flex flex-col items-center justify-center gap-4 text-center group"
+            className="glass-panel p-12 rounded-2xl border-dashed border-2 hover:border-neon-cyan transition-colors cursor-pointer flex flex-col items-center justify-center gap-4 text-center group"
           >
-            <div className="w-16 h-16 rounded-full bg-zinc-800/50 flex items-center justify-center group-hover:bg-[var(--neon-cyan)]/20 transition-colors">
-              <Upload className="w-8 h-8 text-zinc-400 group-hover:text-[var(--neon-cyan)] transition-colors" />
+            <div className="w-16 h-16 rounded-full bg-zinc-800/50 flex items-center justify-center group-hover:bg-neon-cyan/20 transition-colors">
+              <Upload className="w-8 h-8 text-zinc-400 group-hover:text-neon-cyan transition-colors" />
             </div>
             <div>
               <h3 className="text-xl font-medium mb-2">Select Media File</h3>
@@ -227,7 +243,7 @@ export default function Home() {
             <div className="flex flex-col gap-4">
               <div className="flex items-center justify-between">
                 <h2 className="text-xl font-semibold flex items-center gap-2">
-                  <Video className="w-5 h-5 text-[var(--neon-cyan)]" />
+                  <Video className="w-5 h-5 text-neon-cyan" />
                   Source Media
                 </h2>
                 <div className="flex items-center gap-2">
@@ -246,7 +262,7 @@ export default function Home() {
                       setStatus('idle');
                       setErrorMessage('');
                     }}
-                    className="px-4 py-1.5 text-xs font-bold rounded-lg bg-white text-black hover:bg-[var(--neon-cyan)] hover:shadow-[0_0_15px_rgba(0,240,255,0.4)] transition-all flex items-center justify-center"
+                    className="px-4 py-1.5 text-xs font-bold rounded-lg bg-white text-black hover:bg-neon-cyan hover:shadow-[0_0_15px_rgba(0,240,255,0.4)] transition-all flex items-center justify-center"
                   >
                     Change File
                   </button>
@@ -267,7 +283,7 @@ export default function Home() {
               <div className="glass-panel p-6 rounded-xl flex flex-row items-end justify-between gap-4 mt-auto">
                 <div className="flex flex-col gap-2 shrink-0">
                   <label className="text-xs font-medium text-zinc-400 flex items-center gap-2">
-                    <Settings2 className="w-4 h-4 text-[var(--neon-cyan)]" />
+                    <Settings2 className="w-4 h-4 text-neon-cyan" />
                     Target FPS
                   </label>
                   <input
@@ -276,7 +292,7 @@ export default function Home() {
                     max={60}
                     value={targetFps}
                     onChange={(e) => setTargetFps(Number(e.target.value))}
-                    className="w-24 h-14 bg-black/40 border border-[var(--border)] rounded-lg px-3 focus:outline-none focus:border-[var(--neon-cyan)] transition-colors text-lg text-center font-mono"
+                    className="w-24 h-14 bg-black/40 border border-[var(--border)] rounded-lg px-3 focus:outline-none focus:border-neon-cyan transition-colors text-lg text-center font-mono"
                   />
                 </div>
 
@@ -286,7 +302,7 @@ export default function Home() {
                     disabled={status === "processing"}
                     className={`w-full h-14 rounded-lg font-bold flex items-center justify-center gap-2 transition-all ${status === "processing"
                       ? "bg-zinc-800 text-zinc-500 cursor-not-allowed"
-                      : "bg-white text-black hover:bg-[var(--neon-cyan)] hover:shadow-[0_0_20px_rgba(0,240,255,0.4)]"
+                      : "bg-white text-black hover:bg-neon-cyan hover:shadow-[0_0_20px_rgba(0,240,255,0.4)]"
                       }`}
                   >
                     {status === "processing" ? (
@@ -310,7 +326,7 @@ export default function Home() {
             <div className="flex flex-col gap-4">
               <div className="flex items-center justify-between">
                 <h2 className="text-xl font-semibold flex items-center gap-2">
-                  <ArrowRight className="w-5 h-5 text-[var(--neon-pink)]" />
+                  <ArrowRight className="w-5 h-5 text-neon-yellow" />
                   Transcoded Output
                 </h2>
                 <div className="flex items-center gap-2">
@@ -320,7 +336,7 @@ export default function Home() {
                     </span>
                   )}
                   {status === "done" && (
-                    <span className="px-3 py-1 text-xs rounded-full bg-[var(--neon-cyan)]/20 text-[var(--neon-cyan)] border border-[var(--neon-cyan)]/30">
+                    <span className="px-3 py-1 text-xs rounded-full bg-neon-cyan/20 text-neon-cyan border border-neon-cyan/30">
                       {targetFps} FPS
                     </span>
                   )}
@@ -332,11 +348,11 @@ export default function Home() {
                   <p className="text-zinc-600 font-medium text-center">Awaiting source media...</p>
                 ) : status === "processing" ? (
                   <div className="flex flex-col items-center justify-center w-full max-w-xs mx-auto gap-4">
-                    <div className="w-16 h-16 rounded-full border-4 border-zinc-800 border-t-[var(--neon-cyan)] animate-spin mb-2" />
-                    <p className="text-[var(--neon-cyan)] animate-pulse font-medium text-center">Transcoding in Progress</p>
+                    <div className="w-16 h-16 rounded-full border-4 border-zinc-800 border-t-neon-cyan animate-spin mb-2" />
+                    <p className="text-neon-cyan animate-pulse font-medium text-center">{progressLabel}</p>
                     <div className="w-full bg-zinc-800 rounded-full h-2.5 overflow-hidden">
                       <div
-                        className="bg-gradient-to-r from-[var(--neon-cyan)] to-[var(--neon-pink)] h-full transition-all duration-300"
+                        className="bg-gradient-to-r from-neon-cyan to-neon-yellow h-full transition-all duration-300"
                         style={{ width: `${progress}%` }}
                       ></div>
                     </div>
@@ -364,7 +380,7 @@ export default function Home() {
                     <a
                       href={outputPath}
                       download={outputFileName}
-                      className="w-full py-4 rounded-lg font-bold flex items-center justify-center gap-2 bg-gradient-to-r from-[var(--neon-cyan)] to-[var(--neon-pink)] text-white hover:opacity-90 transition-opacity shadow-[0_0_15px_rgba(0,240,255,0.3)]"
+                      className="w-full py-4 rounded-lg font-bold flex items-center justify-center gap-2 bg-gradient-to-r from-neon-cyan to-neon-yellow text-black hover:opacity-90 transition-opacity shadow-[0_0_15px_rgba(0,240,255,0.3)]"
                     >
                       <Download className="w-5 h-5" />
                       Download Output
