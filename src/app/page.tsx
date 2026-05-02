@@ -9,6 +9,7 @@ import { createClient } from '@/lib/supabase/client';
 import { AuthModal } from '@/components/AuthModal';
 import { PaymentModal } from '@/components/PaymentModal';
 import { toast } from 'react-hot-toast';
+import Link from 'next/link';
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
@@ -532,6 +533,24 @@ export default function Home() {
           </motion.div>
         )}
       </main>
+      <footer className='p-8 max-w-xl mx-auto flex flex-col gap-12'>
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.3 }}
+          className="flex flex-row text-sm w-full justify-between text-zinc-500"
+        >
+          <Link href="/refund" className='hover:text-neon-cyan transition-colors cursor-pointer'>
+            <p>Refund Policy</p>
+          </Link>
+          <Link href="/terms" className='hover:text-neon-cyan transition-colors cursor-pointer'>
+            <p>Terms of Service</p>
+          </Link>
+          <Link href="/privacy" className='hover:text-neon-cyan transition-colors cursor-pointer'>
+            <p>Privacy Policy</p>
+          </Link>
+        </motion.div>
+      </footer>
     </>
   );
 }
