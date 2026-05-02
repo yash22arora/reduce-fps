@@ -31,19 +31,32 @@ export default function Home() {
 
   // Auth & Paywall State
   const [user, setUser] = useState<any>(null);
+  const [credits, setCredits] = useState<number | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const supabase = createClient();
 
+  const fetchCredits = async (userId: string) => {
+    const { data } = await supabase.from('user_profiles').select('credits').eq('id', userId).single();
+    if (data) {
+      setCredits(data.credits);
+    }
+  };
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
+      const currentUser = session?.user ?? null;
+      setUser(currentUser);
+      if (currentUser) fetchCredits(currentUser.id);
     });
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
+      const currentUser = session?.user ?? null;
+      setUser(currentUser);
+      if (currentUser) fetchCredits(currentUser.id);
+      else setCredits(null);
     });
 
     return () => subscription.unsubscribe();
@@ -93,6 +106,21 @@ export default function Home() {
     if (outputPath) URL.revokeObjectURL(outputPath);
   };
 
+  const handleUploadClick = () => {
+    if (!user) {
+      const usedAnon = localStorage.getItem('anonymous_conversion_used');
+      if (usedAnon) {
+        setIsAuthModalOpen(true);
+        return;
+      }
+    } else if (credits !== null && credits <= 0) {
+      setIsPaymentModalOpen(true);
+      return;
+    }
+    
+    fileInputRef.current?.click();
+  };
+
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const selectedFile = e.target.files[0];
@@ -120,15 +148,8 @@ export default function Home() {
   const handleConvert = async () => {
     if (!file || !fileName || !ffmpegRef.current) return;
 
-    // FREEMIUM LOGIC
-    if (!user) {
-      const usedAnon = localStorage.getItem('anonymous_conversion_used');
-      if (usedAnon) {
-        setIsAuthModalOpen(true);
-        return;
-      }
-    } else {
-      // Check credits via API
+    if (user) {
+      // Deduct credits via API securely before processing
       try {
         const usageRes = await fetch('/api/usage/decrement', { method: 'POST' });
         const usageData = await usageRes.json();
@@ -138,8 +159,11 @@ export default function Home() {
             setIsPaymentModalOpen(true);
             return;
           }
-          throw new Error(usageData.error || 'Failed to check credits');
+          throw new Error(usageData.error || 'Failed to deduct credits');
         }
+        
+        // Update local state with remaining credits
+        setCredits(usageData.remaining);
       } catch (err: any) {
         setErrorMessage(err.message);
         return;
@@ -215,7 +239,11 @@ export default function Home() {
         isOpen={isPaymentModalOpen} 
         onClose={() => setIsPaymentModalOpen(false)} 
         userId={user?.id} 
-        onSuccess={() => { setIsPaymentModalOpen(false); alert("Credits successfully purchased! You may now begin transcoding."); }} 
+        onSuccess={() => { 
+          setIsPaymentModalOpen(false); 
+          if (user) fetchCredits(user.id);
+          alert("Credits successfully purchased! You may now upload and transcode media."); 
+        }} 
       />
       
       <main className="min-h-screen p-8 max-w-6xl mx-auto flex flex-col gap-12 relative">
@@ -224,6 +252,11 @@ export default function Home() {
           <div className="absolute top-0 right-0 flex items-center gap-4">
             {user ? (
               <div className="flex items-center gap-3">
+                {credits !== null && (
+                  <span className="px-3 py-1 text-xs font-bold rounded-full bg-neon-cyan/20 text-neon-cyan border border-neon-cyan/30">
+                    {credits} Credits
+                  </span>
+                )}
                 <span className="text-xs text-zinc-500">{user.email}</span>
                 <button 
                   onClick={() => supabase.auth.signOut()}
@@ -302,7 +335,7 @@ export default function Home() {
             className="w-full max-w-xl mx-auto"
           >
             <div
-              onClick={() => fileInputRef.current?.click()}
+              onClick={handleUploadClick}
               className="glass-panel p-12 rounded-2xl border-dashed border-2 hover:border-neon-cyan transition-colors cursor-pointer flex flex-col items-center justify-center gap-4 text-center group"
             >
               <div className="w-16 h-16 rounded-full bg-zinc-800/50 flex items-center justify-center group-hover:bg-neon-cyan/20 transition-colors">
