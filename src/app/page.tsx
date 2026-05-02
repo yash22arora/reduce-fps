@@ -5,10 +5,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Upload, Video, Play, Download, Settings2, Loader2, ArrowRight, ShieldCheck, User } from 'lucide-react';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
-import Script from 'next/script';
 import { createClient } from '@/lib/supabase/client';
 import { AuthModal } from '@/components/AuthModal';
 import { PaymentModal } from '@/components/PaymentModal';
+import { toast } from 'react-hot-toast';
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
@@ -118,7 +118,7 @@ export default function Home() {
       setIsPaymentModalOpen(true);
       return;
     }
-    
+
     fileInputRef.current?.click();
   };
 
@@ -154,7 +154,7 @@ export default function Home() {
       try {
         const usageRes = await fetch('/api/usage/anon', { method: 'POST' });
         const usageData = await usageRes.json();
-        
+
         if (!usageRes.ok || !usageData.success) {
           setIsAuthModalOpen(true);
           return;
@@ -168,7 +168,7 @@ export default function Home() {
       try {
         const usageRes = await fetch('/api/usage/decrement', { method: 'POST' });
         const usageData = await usageRes.json();
-        
+
         if (!usageRes.ok || !usageData.success) {
           if (usageData.reason === 'out_of_credits') {
             setIsPaymentModalOpen(true);
@@ -176,7 +176,7 @@ export default function Home() {
           }
           throw new Error(usageData.error || 'Failed to deduct credits');
         }
-        
+
         // Update local state with remaining credits
         setCredits(usageData.remaining);
       } catch (err: any) {
@@ -239,26 +239,25 @@ export default function Home() {
 
   return (
     <>
-      <Script src="https://checkout.razorpay.com/v1/checkout.js" strategy="lazyOnload" />
-      <AuthModal 
-        isOpen={isAuthModalOpen} 
-        onClose={() => setIsAuthModalOpen(false)} 
-        onSuccess={() => setIsAuthModalOpen(false)} 
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        onSuccess={() => setIsAuthModalOpen(false)}
       />
-      <PaymentModal 
-        isOpen={isPaymentModalOpen} 
-        onClose={() => setIsPaymentModalOpen(false)} 
-        userId={user?.id} 
-        onSuccess={() => { 
-          setIsPaymentModalOpen(false); 
+      <PaymentModal
+        isOpen={isPaymentModalOpen}
+        onClose={() => setIsPaymentModalOpen(false)}
+        userId={user?.id}
+        onSuccess={() => {
+          setIsPaymentModalOpen(false);
           if (user) fetchCredits(user.id);
-          alert("Credits successfully purchased! You may now upload and transcode media."); 
-        }} 
+          toast.success("Credits successfully purchased! You may now upload and transcode media.");
+        }}
       />
-      
+
       <main className="min-h-screen p-8 max-w-6xl mx-auto flex flex-col gap-12 relative">
         <header className="flex flex-col gap-4 text-center items-center py-8 relative">
-          
+
           <div className="absolute top-0 right-0 flex items-center gap-4">
             {user ? (
               <div className="flex items-center gap-3">
@@ -268,15 +267,18 @@ export default function Home() {
                   </span>
                 )}
                 <span className="text-xs text-zinc-500">{user.email}</span>
-                <button 
-                  onClick={() => supabase.auth.signOut()}
+                <button
+                  onClick={async () => {
+                    await supabase.auth.signOut();
+                    toast.success("Signed out successfully.");
+                  }}
                   className="px-4 py-1.5 text-xs font-bold rounded-lg bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors"
                 >
                   Sign Out
                 </button>
               </div>
             ) : (
-              <button 
+              <button
                 onClick={() => setIsAuthModalOpen(true)}
                 className="flex items-center gap-2 px-4 py-1.5 text-xs font-bold rounded-lg bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors"
               >
@@ -310,7 +312,7 @@ export default function Home() {
           >
             Locally transcode video files to a custom frame rate using WebAssembly. Secure, fast, and completely client-side.
           </motion.p>
-          
+
           {/* Privacy Shield */}
           <motion.div
             initial={{ opacity: 0 }}

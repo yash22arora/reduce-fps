@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Loader2, X, Zap, CheckCircle2 } from 'lucide-react';
+import { useRazorpay, RazorpayOrderOptions } from 'react-razorpay';
+import { toast } from 'react-hot-toast';
 
 interface PaymentModalProps {
   isOpen: boolean;
@@ -11,6 +13,7 @@ interface PaymentModalProps {
 
 export function PaymentModal({ isOpen, onClose, userId, onSuccess }: PaymentModalProps) {
   const [isLoading, setIsLoading] = useState(false);
+  const { error, isLoading: isRazorpayLoading, Razorpay } = useRazorpay();
   const [selectedPlan, setSelectedPlan] = useState<"starter" | "pro">("starter");
 
   const plans = {
@@ -19,6 +22,10 @@ export function PaymentModal({ isOpen, onClose, userId, onSuccess }: PaymentModa
   };
 
   const handlePayment = async () => {
+    if (!Razorpay) {
+      toast.error("Payment gateway is still initializing. Please wait a moment.");
+      return;
+    }
     setIsLoading(true);
     try {
       // 1. Create order
@@ -28,16 +35,16 @@ export function PaymentModal({ isOpen, onClose, userId, onSuccess }: PaymentModa
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ amount: plan.price, credits: plan.credits }),
       });
-      
+
       const orderData = await orderRes.json();
       if (!orderRes.ok) throw new Error(orderData.error);
 
       // 2. Initialize Razorpay Checkout
-      const options = {
-        key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
+      const options: RazorpayOrderOptions = {
+        key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || "",
         amount: orderData.amount,
-        currency: "INR",
-        name: "ChronoFrame Engine",
+        currency: 'INR',
+        name: `ChronoFrame Engine Plan ${plan.label}`,
         description: `${plan.credits} Transcoding Credits`,
         order_id: orderData.orderId,
         handler: async function (response: any) {
@@ -53,11 +60,11 @@ export function PaymentModal({ isOpen, onClose, userId, onSuccess }: PaymentModa
               credits: plan.credits
             }),
           });
-          
+
           if (verifyRes.ok) {
             onSuccess();
           } else {
-            alert('Payment verification failed. Please contact support.');
+            toast.error('Payment verification failed. Please contact support.');
           }
         },
         theme: {
@@ -65,12 +72,11 @@ export function PaymentModal({ isOpen, onClose, userId, onSuccess }: PaymentModa
         }
       };
 
-      // @ts-ignore
-      const rzp = new window.Razorpay(options);
+      const rzp = new Razorpay(options);
       rzp.open();
-      
+
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message);
     } finally {
       setIsLoading(false);
     }
@@ -97,7 +103,7 @@ export function PaymentModal({ isOpen, onClose, userId, onSuccess }: PaymentModa
             >
               <X className="w-5 h-5" />
             </button>
-            
+
             <div className="p-8 flex flex-col gap-8 mt-4">
               <div className="text-center">
                 <div className="w-16 h-16 rounded-full bg-neon-cyan/20 flex items-center justify-center mx-auto mb-4 border border-neon-cyan/30">
@@ -108,7 +114,7 @@ export function PaymentModal({ isOpen, onClose, userId, onSuccess }: PaymentModa
               </div>
 
               <div className="grid grid-cols-2 gap-4 relative">
-                <div 
+                <div
                   onClick={() => setSelectedPlan('starter')}
                   className={`cursor-pointer p-6 rounded-2xl border-2 transition-all flex flex-col items-center gap-2 ${selectedPlan === 'starter' ? 'border-neon-cyan bg-neon-cyan/10' : 'border-[var(--border)] bg-black/40 hover:border-zinc-500'}`}
                 >
@@ -116,7 +122,7 @@ export function PaymentModal({ isOpen, onClose, userId, onSuccess }: PaymentModa
                   <div className="text-3xl font-black text-neon-cyan">₹199</div>
                   <p className="text-sm text-zinc-400 font-medium">5 Credits</p>
                 </div>
-                <div 
+                <div
                   onClick={() => setSelectedPlan('pro')}
                   className={`relative cursor-pointer p-6 rounded-2xl border-2 transition-all flex flex-col items-center gap-2 ${selectedPlan === 'pro' ? 'border-neon-yellow bg-neon-yellow/10' : 'border-[var(--border)] bg-black/40 hover:border-zinc-500'}`}
                 >
