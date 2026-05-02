@@ -106,10 +106,11 @@ export default function Home() {
     if (outputPath) URL.revokeObjectURL(outputPath);
   };
 
-  const handleUploadClick = () => {
+  const handleUploadClick = async () => {
     if (!user) {
-      const usedAnon = localStorage.getItem('anonymous_conversion_used');
-      if (usedAnon) {
+      const res = await fetch('/api/usage/anon');
+      const data = await res.json();
+      if (data.used) {
         setIsAuthModalOpen(true);
         return;
       }
@@ -148,7 +149,21 @@ export default function Home() {
   const handleConvert = async () => {
     if (!file || !fileName || !ffmpegRef.current) return;
 
-    if (user) {
+    if (!user) {
+      // Consume anonymous usage via API securely before processing
+      try {
+        const usageRes = await fetch('/api/usage/anon', { method: 'POST' });
+        const usageData = await usageRes.json();
+        
+        if (!usageRes.ok || !usageData.success) {
+          setIsAuthModalOpen(true);
+          return;
+        }
+      } catch (err: any) {
+        setErrorMessage(err.message);
+        return;
+      }
+    } else {
       // Deduct credits via API securely before processing
       try {
         const usageRes = await fetch('/api/usage/decrement', { method: 'POST' });
@@ -214,11 +229,6 @@ export default function Home() {
       setOutputFileSize(data.byteLength || data.length);
 
       setStatus("done");
-
-      // Mark anonymous usage
-      if (!user) {
-        localStorage.setItem('anonymous_conversion_used', 'true');
-      }
 
     } catch (err: any) {
       console.error(err);
@@ -349,6 +359,7 @@ export default function Home() {
                 type="file"
                 ref={fileInputRef}
                 onChange={handleFileChange}
+                onClick={(e) => e.stopPropagation()}
                 accept="video/mp4,video/quicktime,video/webm"
                 className="hidden"
               />
