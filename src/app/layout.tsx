@@ -1,11 +1,23 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Inter, Molle, Indie_Flower } from "next/font/google";
 import { Toaster } from "react-hot-toast";
 import "./globals.css";
 
 const inter = Inter({
   variable: "--font-inter",
   subsets: ["latin"],
+});
+
+const molle = Molle({
+  variable: "--font-molle",
+  weight: "400",
+  subsets: ["latin"]
+});
+
+const indieFlower = Indie_Flower({
+  variable: "--font-indie-flower",
+  weight: "400",
+  subsets: ["latin"]
 });
 
 export const metadata: Metadata = {
@@ -19,7 +31,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" className={`${molle.variable} ${indieFlower.variable} antialiased`}>
       <body
         className={`${inter.variable} antialiased selection:bg-[var(--neon-cyan)] selection:text-black`}
       >

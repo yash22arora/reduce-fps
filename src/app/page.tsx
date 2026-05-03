@@ -10,6 +10,7 @@ import { AuthModal } from '@/components/AuthModal';
 import { PaymentModal } from '@/components/PaymentModal';
 import { toast } from 'react-hot-toast';
 import Link from 'next/link';
+import { DemoModal } from '@/components/DemoModal';
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
@@ -35,6 +36,7 @@ export default function Home() {
   const [credits, setCredits] = useState<number | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [isDemoModalOpen, setIsDemoModalOpen] = useState(true);
   const supabase = createClient();
 
   const fetchCredits = async (userId: string) => {
@@ -102,12 +104,18 @@ export default function Home() {
     loadFFmpeg();
   }, []);
 
+  useEffect(() => {
+    document.body.style.overflow = isDemoModalOpen ? 'hidden' : 'auto';
+  }, [isDemoModalOpen])
+
   const cleanupCurrentSession = () => {
     if (uploadedPath) URL.revokeObjectURL(uploadedPath);
     if (outputPath) URL.revokeObjectURL(outputPath);
   };
 
   const handleUploadClick = async () => {
+    if (isDemoModalOpen) return;
+
     if (!user) {
       const res = await fetch('/api/usage/anon');
       const data = await res.json();
@@ -254,6 +262,10 @@ export default function Home() {
           if (user) fetchCredits(user.id);
           toast.success("Credits successfully purchased! You may now upload and transcode media.");
         }}
+      />
+      <DemoModal
+        isOpen={isDemoModalOpen}
+        onClose={() => setIsDemoModalOpen(false)}
       />
 
       <main className="min-h-screen p-8 max-w-6xl mx-auto flex flex-col gap-12 relative">
