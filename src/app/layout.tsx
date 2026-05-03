@@ -33,9 +33,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${molle.variable} ${indieFlower.variable} antialiased`}>
+    <html lang="en">
       <body
-        className={`${inter.variable} antialiased selection:bg-[var(--neon-cyan)] selection:text-black`}
+        className={`${inter.variable} ${molle.variable} ${indieFlower.variable} antialiased selection:bg-[var(--neon-cyan)] selection:text-black`}
       >
         <Toaster
           position="top-right"

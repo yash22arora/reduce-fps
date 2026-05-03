@@ -258,9 +258,9 @@ export default function Home() {
       />
 
       <main className="min-h-screen p-8 max-w-6xl mx-auto flex flex-col gap-12 relative">
-        <header className="flex flex-col gap-4 text-center items-center py-8 relative">
+        <header className="flex flex-col gap-4 text-center items-center pb-8 relative">
 
-          <div className="absolute top-0 right-0 flex items-center gap-4 w-full">
+          <div className="flex mb-8 items-center gap-4 w-full">
             {user ? (
               <div className="flex items-center justify-between w-full">
                 <div className='mr-auto flex items-center gap-2'>
