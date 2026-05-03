@@ -25,6 +25,8 @@ export const metadata: Metadata = {
   description: "Locally process and convert video frame rates with absolute precision.",
 };
 
+import { Providers } from "@/components/Providers";
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -68,7 +70,9 @@ export default function RootLayout({
             }
           }}
         />
-        {children}
+        <Providers>
+          {children}
+        </Providers>
       </body>
     </html>
   );

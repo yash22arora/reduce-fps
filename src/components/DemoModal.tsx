@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Loader2, Volume, VolumeX, X } from 'lucide-react';
-import { createClient } from '@/lib/supabase/client';
+import { X } from 'lucide-react';
 
 interface DemoModalProps {
   isOpen: boolean;

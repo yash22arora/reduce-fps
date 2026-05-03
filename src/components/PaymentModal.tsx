@@ -11,10 +11,14 @@ interface PaymentModalProps {
   onSuccess: () => void;
 }
 
+import { useCreateOrder, useVerifyPayment } from '@/hooks/use-payment';
+
 export function PaymentModal({ isOpen, onClose, userId, onSuccess }: PaymentModalProps) {
-  const [isLoading, setIsLoading] = useState(false);
-  const { error, isLoading: isRazorpayLoading, Razorpay } = useRazorpay();
+  const { error: rzpError, isLoading: isRazorpayLoading, Razorpay } = useRazorpay();
   const [selectedPlan, setSelectedPlan] = useState<"starter" | "pro">("starter");
+
+  const createOrder = useCreateOrder();
+  const verifyPayment = useVerifyPayment();
 
   const plans = {
     starter: { credits: 5, price: 199, label: "Starter Pack" },
@@ -26,18 +30,14 @@ export function PaymentModal({ isOpen, onClose, userId, onSuccess }: PaymentModa
       toast.error("Payment gateway is still initializing. Please wait a moment.");
       return;
     }
-    setIsLoading(true);
+
     try {
       // 1. Create order
       const plan = plans[selectedPlan];
-      const orderRes = await fetch('/api/payment/create-order', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amount: plan.price, credits: plan.credits }),
+      const orderData = await createOrder.mutateAsync({ 
+        amount: plan.price, 
+        credits: plan.credits 
       });
-
-      const orderData = await orderRes.json();
-      if (!orderRes.ok) throw new Error(orderData.error);
 
       // 2. Initialize Razorpay Checkout
       const options: RazorpayOrderOptions = {
@@ -49,21 +49,16 @@ export function PaymentModal({ isOpen, onClose, userId, onSuccess }: PaymentModa
         order_id: orderData.orderId,
         handler: async function (response: any) {
           // 3. Verify Payment
-          const verifyRes = await fetch('/api/payment/verify', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
+          try {
+            await verifyPayment.mutateAsync({
               razorpay_order_id: response.razorpay_order_id,
               razorpay_payment_id: response.razorpay_payment_id,
               razorpay_signature: response.razorpay_signature,
               userId: userId,
               credits: plan.credits
-            }),
-          });
-
-          if (verifyRes.ok) {
+            });
             onSuccess();
-          } else {
+          } catch (err: any) {
             toast.error('Payment verification failed. Please contact support.');
           }
         },
@@ -77,10 +72,10 @@ export function PaymentModal({ isOpen, onClose, userId, onSuccess }: PaymentModa
 
     } catch (err: any) {
       toast.error(err.message);
-    } finally {
-      setIsLoading(false);
     }
   };
+
+  const isLoading = createOrder.isPending || verifyPayment.isPending;
 
   return (
     <AnimatePresence>

@@ -11,6 +11,8 @@ import { PaymentModal } from '@/components/PaymentModal';
 import { toast } from 'react-hot-toast';
 import Link from 'next/link';
 import { DemoModal } from '@/components/DemoModal';
+import { useCredits } from '@/hooks/use-credits';
+import { useAnonStatus, useMarkAnonUsed, useDecrementCredits } from '@/hooks/use-usage';
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
@@ -33,24 +35,22 @@ export default function Home() {
 
   // Auth & Paywall State
   const [user, setUser] = useState<any>(null);
-  const [credits, setCredits] = useState<number | null>(null);
+  const supabase = createClient();
+  const { data: credits, refetch: refetchCredits } = useCredits(user?.id);
+  const { data: anonStatus, isLoading: isAnonLoading } = useAnonStatus();
+  const markAnonUsed = useMarkAnonUsed();
+  const decrementCredits = useDecrementCredits();
+
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [isDemoModalOpen, setIsDemoModalOpen] = useState(true);
-  const supabase = createClient();
-
-  const fetchCredits = async (userId: string) => {
-    const { data } = await supabase.from('user_profiles').select('credits').eq('id', userId).single();
-    if (data) {
-      setCredits(data.credits);
-    }
-  };
+  const [isSigningOut, setIsSigningOut] = useState(false);
+  const [isClickingUpload, setIsClickingUpload] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       const currentUser = session?.user ?? null;
       setUser(currentUser);
-      if (currentUser) fetchCredits(currentUser.id);
     });
 
     const {
@@ -58,8 +58,6 @@ export default function Home() {
     } = supabase.auth.onAuthStateChange((_event, session) => {
       const currentUser = session?.user ?? null;
       setUser(currentUser);
-      if (currentUser) fetchCredits(currentUser.id);
-      else setCredits(null);
     });
 
     return () => subscription.unsubscribe();
@@ -115,20 +113,25 @@ export default function Home() {
 
   const handleUploadClick = async () => {
     if (isDemoModalOpen) return;
+    setIsClickingUpload(true);
 
-    if (!user) {
-      const res = await fetch('/api/usage/anon');
-      const data = await res.json();
-      if (data.used) {
-        setIsAuthModalOpen(true);
+    try {
+      if (!user) {
+        if (isAnonLoading) return;
+        if (anonStatus?.used) {
+          setIsAuthModalOpen(true);
+          return;
+        }
+      } else if (credits !== undefined && credits !== null && credits <= 0) {
+        setIsPaymentModalOpen(true);
         return;
       }
-    } else if (credits !== null && credits <= 0) {
-      setIsPaymentModalOpen(true);
-      return;
-    }
 
-    fileInputRef.current?.click();
+      fileInputRef.current?.click();
+    } finally {
+      // Small timeout to ensure the user sees the feedback before the browser might pause execution for the file picker
+      setTimeout(() => setIsClickingUpload(false), 1000);
+    }
   };
 
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
@@ -161,13 +164,7 @@ export default function Home() {
     if (!user) {
       // Consume anonymous usage via API securely before processing
       try {
-        const usageRes = await fetch('/api/usage/anon', { method: 'POST' });
-        const usageData = await usageRes.json();
-
-        if (!usageRes.ok || !usageData.success) {
-          setIsAuthModalOpen(true);
-          return;
-        }
+        await markAnonUsed.mutateAsync();
       } catch (err: any) {
         setErrorMessage(err.message);
         return;
@@ -175,20 +172,12 @@ export default function Home() {
     } else {
       // Deduct credits via API securely before processing
       try {
-        const usageRes = await fetch('/api/usage/decrement', { method: 'POST' });
-        const usageData = await usageRes.json();
-
-        if (!usageRes.ok || !usageData.success) {
-          if (usageData.reason === 'out_of_credits') {
-            setIsPaymentModalOpen(true);
-            return;
-          }
-          throw new Error(usageData.error || 'Failed to deduct credits');
-        }
-
-        // Update local state with remaining credits
-        setCredits(usageData.remaining);
+        await decrementCredits.mutateAsync();
       } catch (err: any) {
+        if (err.message === 'out_of_credits') {
+          setIsPaymentModalOpen(true);
+          return;
+        }
         setErrorMessage(err.message);
         return;
       }
@@ -259,7 +248,7 @@ export default function Home() {
         userId={user?.id}
         onSuccess={() => {
           setIsPaymentModalOpen(false);
-          if (user) fetchCredits(user.id);
+          refetchCredits();
           toast.success("Credits successfully purchased! You may now upload and transcode media.");
         }}
       />
@@ -271,29 +260,37 @@ export default function Home() {
       <main className="min-h-screen p-8 max-w-6xl mx-auto flex flex-col gap-12 relative">
         <header className="flex flex-col gap-4 text-center items-center py-8 relative">
 
-          <div className="absolute top-0 right-0 flex items-center gap-4">
+          <div className="absolute top-0 right-0 flex items-center gap-4 w-full">
             {user ? (
-              <div className="flex items-center gap-3">
-                {credits !== null && (
-                  <span className="px-3 py-1 text-xs font-bold rounded-full bg-neon-cyan/20 text-neon-cyan border border-neon-cyan/30">
-                    {credits} Credits
-                  </span>
-                )}
-                <span className="text-xs text-zinc-500">{user.email}</span>
+              <div className="flex items-center justify-between w-full">
+                <div className='mr-auto flex items-center gap-2'>
+                  <span className="text-xs text-zinc-500">{user.email}</span>
+
+                  {credits !== null && (
+                    <span className="px-3 py-1 text-xs font-bold rounded-full bg-neon-cyan/20 text-neon-cyan border border-neon-cyan/30">
+                      {credits} Credits
+                    </span>
+                  )}
+                </div>
+
                 <button
                   onClick={async () => {
+                    setIsSigningOut(true);
                     await supabase.auth.signOut();
+                    setIsSigningOut(false);
                     toast.success("Signed out successfully.");
                   }}
-                  className="px-4 py-1.5 text-xs font-bold rounded-lg bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors"
+                  disabled={isSigningOut}
+                  className="ml-auto px-4 py-1.5 text-xs font-bold rounded-lg bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors flex items-center gap-2"
                 >
+                  {isSigningOut ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
                   Sign Out
                 </button>
               </div>
             ) : (
               <button
                 onClick={() => setIsAuthModalOpen(true)}
-                className="flex items-center gap-2 px-4 py-1.5 text-xs font-bold rounded-lg bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors"
+                className="flex ml-auto items-center gap-2 px-4 py-1.5 text-xs font-bold rounded-lg bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors"
               >
                 <User className="w-4 h-4" />
                 Sign In
@@ -361,14 +358,22 @@ export default function Home() {
           >
             <div
               onClick={handleUploadClick}
-              className="glass-panel p-12 rounded-2xl border-dashed border-2 hover:border-neon-cyan transition-colors cursor-pointer flex flex-col items-center justify-center gap-4 text-center group"
+              className={`glass-panel p-12 rounded-2xl border-dashed border-2 transition-all cursor-pointer flex flex-col items-center justify-center gap-4 text-center group ${isAnonLoading || isClickingUpload ? 'opacity-50 pointer-events-none' : 'hover:border-neon-cyan'}`}
             >
               <div className="w-16 h-16 rounded-full bg-zinc-800/50 flex items-center justify-center group-hover:bg-neon-cyan/20 transition-colors">
-                <Upload className="w-8 h-8 text-zinc-400 group-hover:text-neon-cyan transition-colors" />
+                {isAnonLoading || isClickingUpload ? (
+                  <Loader2 className="w-8 h-8 text-neon-cyan animate-spin" />
+                ) : (
+                  <Upload className="w-8 h-8 text-zinc-400 group-hover:text-neon-cyan transition-colors" />
+                )}
               </div>
               <div>
-                <h3 className="text-xl font-medium mb-2">Select Media File</h3>
-                <p className="text-zinc-500 text-sm">Drag & drop or browse for MP4, MOV, or WEBM (Max 100MB payload)</p>
+                <h3 className="text-xl font-medium mb-2">
+                  {isAnonLoading ? "Verifying Engine Status..." : isClickingUpload ? "Opening Picker..." : "Select Media File"}
+                </h3>
+                <p className="text-zinc-500 text-sm">
+                  {isAnonLoading ? "Please wait while we check your remaining credits." : isClickingUpload ? "Preparing local transcoding environment..." : "Drag & drop or browse for MP4, MOV, or WEBM (Max 100MB payload)"}
+                </p>
               </div>
               <input
                 type="file"
@@ -451,21 +456,18 @@ export default function Home() {
                   <div className="flex-1 w-full flex flex-col items-center">
                     <button
                       onClick={handleConvert}
-                      disabled={status === "processing"}
-                      className={`w-full h-14 rounded-lg font-bold flex items-center justify-center gap-2 transition-all ${status === "processing"
-                        ? "bg-zinc-800 text-zinc-500 cursor-not-allowed"
-                        : "bg-white text-black hover:bg-neon-cyan hover:shadow-[0_0_20px_rgba(0,240,255,0.4)]"
-                        }`}
+                      disabled={status === "processing" || markAnonUsed.isPending || decrementCredits.isPending}
+                      className="group relative flex items-center gap-3 px-10 py-5 bg-white text-black font-black rounded-2xl hover:scale-105 active:scale-95 transition-all disabled:opacity-50 disabled:hover:scale-100 disabled:active:scale-100 shadow-[0_0_20px_rgba(255,255,255,0.3)]"
                     >
-                      {status === "processing" ? (
+                      {status === "processing" || markAnonUsed.isPending || decrementCredits.isPending ? (
                         <>
-                          <Loader2 className="w-5 h-5 animate-spin" />
-                          Processing...
+                          <Loader2 className="w-6 h-6 animate-spin" />
+                          <span>{status === "processing" ? "Converting..." : "Verifying..."}</span>
                         </>
                       ) : (
                         <>
-                          <Play className="w-5 h-5" fill="currentColor" />
-                          Begin Transcoding
+                          <Play className="w-6 h-6" fill="currentColor" />
+                          <span>Begin Transcoding</span>
                         </>
                       )}
                     </button>
