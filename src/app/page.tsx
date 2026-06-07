@@ -119,7 +119,7 @@ export default function Home() {
 
   const [isAuthModalOpen, setIsAuthModalOpen]       = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
-  const [isDemoModalOpen, setIsDemoModalOpen]       = useState(true);
+  const [isDemoModalOpen, setIsDemoModalOpen]       = useState(false);
   const [isSigningOut, setIsSigningOut]             = useState(false);
   const [isClickingUpload, setIsClickingUpload]     = useState(false);
 
@@ -202,6 +202,10 @@ export default function Home() {
 
     detect();
   }, [file]);
+
+  useEffect(() => {
+    if (!localStorage.getItem('demo_seen')) setIsDemoModalOpen(true);
+  }, []);
 
   useEffect(() => {
     document.body.style.overflow = isDemoModalOpen ? 'hidden' : 'auto';
@@ -387,7 +391,10 @@ export default function Home() {
       />
       <DemoModal
         isOpen={isDemoModalOpen}
-        onClose={() => setIsDemoModalOpen(false)}
+        onClose={() => {
+          localStorage.setItem('demo_seen', '1');
+          setIsDemoModalOpen(false);
+        }}
       />
 
       <main className="min-h-screen p-8 max-w-6xl mx-auto flex flex-col gap-12 relative">
