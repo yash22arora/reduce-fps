@@ -1,6 +1,6 @@
-import { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { X } from 'lucide-react';
+import { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { X } from "lucide-react";
 
 interface DemoModalProps {
   isOpen: boolean;
@@ -9,8 +9,12 @@ interface DemoModalProps {
   subtitle?: string;
 }
 
-export function DemoModal({ isOpen, onClose, title = "See the magic in action!", subtitle = "Did not shoot your videos with Dazz Cam? You can still make that \"OK JAANU\" edit ;)" }: DemoModalProps) {
-
+export function DemoModal({
+  isOpen,
+  onClose,
+  title = "See the magic in action!",
+  subtitle = 'Did not shoot your videos with Dazz Cam? You can still make that "OK JAANU" edit ;)',
+}: DemoModalProps) {
   const [muted, setMuted] = useState(true);
   const toggleMute = () => setMuted(!muted);
 
@@ -41,22 +45,30 @@ export function DemoModal({ isOpen, onClose, title = "See the magic in action!",
             <div className="p-8 flex flex-col gap-6 text-center">
               <div>
                 <h2 className="text-2xl text-zinc-200 font-molle">{title}</h2>
-                <p className="text-zinc-400 text-sm font-indie-flower">{subtitle}</p>
+                <p className="text-zinc-400 text-sm font-indie-flower">
+                  {subtitle}
+                </p>
               </div>
 
-              <div className='bg-[var(--card)] border border-[var(--border)] rounded-2xl shadow-2xl'>
+              <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl shadow-2xl">
                 <video
-                  src="/demo.MP4"
+                  // TODO: Add CDN video link
+                  src=""
                   autoPlay
                   loop
                   playsInline
                   muted={muted}
-                  onClick={(e) => { e.stopPropagation(); toggleMute(); }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleMute();
+                  }}
                   onContextMenu={(e) => e.preventDefault()}
                   className="w-full h-full object-contain bg-black/50 rounded-2xl"
                 ></video>
               </div>
-              <span className='text-zinc-400 text-xs font-inter'>Tap the video to mute/unmute. P.S. the video is in 6fps.</span>
+              <span className="text-zinc-400 text-xs font-inter">
+                Tap the video to mute/unmute. P.S. the video is in 6fps.
+              </span>
 
               <button
                 onClick={onClose}
@@ -64,7 +76,6 @@ export function DemoModal({ isOpen, onClose, title = "See the magic in action!",
               >
                 <X className="w-8 h-8 cursor-pointer bg-zinc-800/50 hover:bg-zinc-800 p-2 rounded-full" />
               </button>
-
             </div>
           </motion.div>
         </motion.div>
