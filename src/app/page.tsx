@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, ChangeEvent, useEffect } from 'react';
+import { useState, useRef, ChangeEvent, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Upload, Video, Play, Download, Settings2, Loader2, ArrowRight, ShieldCheck, User } from 'lucide-react';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
@@ -14,83 +14,146 @@ import { DemoModal } from '@/components/DemoModal';
 import { useCredits } from '@/hooks/use-credits';
 import { useAnonStatus, useMarkAnonUsed, useDecrementCredits } from '@/hooks/use-usage';
 
+const ASPECT_RATIOS = [
+  { id: 'original', label: 'Original', w: 0,  h: 0  },
+  { id: '16:9',     label: '16:9',     w: 16, h: 9  },
+  { id: '9:16',     label: '9:16',     w: 9,  h: 16 },
+  { id: '4:3',      label: '4:3',      w: 4,  h: 3  },
+  { id: '3:4',      label: '3:4',      w: 3,  h: 4  },
+  { id: '1:1',      label: '1:1',      w: 1,  h: 1  },
+  { id: '4:5',      label: '4:5',      w: 4,  h: 5  },
+  { id: '5:4',      label: '5:4',      w: 5,  h: 4  },
+];
+
+const QUALITY_LABELS = ['Low', 'Medium', 'High'] as const;
+// CRF 23 is FFmpeg's default (good quality). Lower = larger file, higher = smaller.
+const QUALITY_CRF    = [35, 28, 23];
+
+// Multipliers relative to a source assumed at CRF ~23 (typical web/phone video).
+// Each 6 CRF units ≈ 2× bitrate change in H.264.
+const QUALITY_MULT   = [0.25, 0.6, 1.0]; // Low (CRF 35), Medium (CRF 28), High (CRF 23)
+
+function calcOutputDimensions(srcW: number, srcH: number, ratio: string) {
+  if (ratio === 'original') return { w: srcW, h: srcH };
+  const [rw, rh] = ratio.split(':').map(Number);
+  const srcR = srcW / srcH, tgtR = rw / rh;
+  let w: number, h: number;
+  if (srcR > tgtR) {
+    h = srcH; w = Math.round(srcH * tgtR); if (w % 2) w -= 1;
+  } else {
+    w = srcW; h = Math.round(srcW / tgtR); if (h % 2) h -= 1;
+  }
+  return { w, h };
+}
+
+function sliderTrackStyle(value: number, min: number, max: number): React.CSSProperties {
+  const pct = ((value - min) / (max - min)) * 100;
+  return {
+    background: `linear-gradient(to right, #00f0ff ${pct}%, #27272a ${pct}%)`,
+  };
+}
+
+function AspectRatioRect({ w, h, selected }: { w: number; h: number; selected: boolean }) {
+  const BOX = 36;
+  const ratio = w / h;
+  let rw: number, rh: number;
+  if (ratio >= 1) {
+    rw = BOX;
+    rh = Math.round(BOX / ratio);
+  } else {
+    rh = BOX;
+    rw = Math.round(BOX * ratio);
+  }
+  return (
+    <div
+      className="rounded-sm border-2 transition-colors"
+      style={{
+        width: rw,
+        height: rh,
+        borderColor: selected ? '#00f0ff' : '#3f3f46',
+        backgroundColor: selected ? 'rgba(0,240,255,0.1)' : 'transparent',
+      }}
+    />
+  );
+}
+
 export default function Home() {
-  const [file, setFile] = useState<File | null>(null);
+  const [file, setFile]               = useState<File | null>(null);
   const [uploadedPath, setUploadedPath] = useState<string>('');
-  const [fileName, setFileName] = useState<string>('');
+  const [fileName, setFileName]       = useState<string>('');
 
-  const [targetFps, setTargetFps] = useState<number>(6);
+  const [targetFps, setTargetFps]     = useState<number>(6);
+  const [detectedFps, setDetectedFps] = useState<number | null>(null);
+  const [isDetectingFps, setIsDetectingFps] = useState(false);
+  const [quality, setQuality]         = useState<number>(2); // 0=Low 1=Medium 2=High
+  const [aspectRatio, setAspectRatio] = useState<string>('original');
+  const [videoMeta, setVideoMeta]     = useState<{ duration: number; width: number; height: number } | null>(null);
 
-  const [status, setStatus] = useState<"idle" | "loading_ffmpeg" | "processing" | "done" | "error">("loading_ffmpeg");
+  const estimatedSizeMB = useMemo(() => {
+    // Need source fps to compute the frame-count ratio.
+    if (!videoMeta || !file || !detectedFps) return null;
+    const { w: outW, h: outH } = calcOutputDimensions(videoMeta.width, videoMeta.height, aspectRatio);
+    const pixelFactor = (outW * outH) / (videoMeta.width * videoMeta.height);
+    // Base: scale source file size by fps ratio, pixel ratio, and quality multiplier.
+    return (file.size / (1024 * 1024)) * (targetFps / detectedFps) * pixelFactor * QUALITY_MULT[quality];
+  }, [videoMeta, file, detectedFps, targetFps, quality, aspectRatio]);
+
+  const [status, setStatus]           = useState<"idle" | "loading_ffmpeg" | "processing" | "done" | "error">("loading_ffmpeg");
   const [errorMessage, setErrorMessage] = useState<string>('');
-  const [progress, setProgress] = useState<number>(0);
-  const [progressLabel, setProgressLabel] = useState<string>('');
+  const [progress, setProgress]       = useState<number>(0);
 
-  const [outputPath, setOutputPath] = useState<string>('');
+  const [outputPath, setOutputPath]   = useState<string>('');
   const [outputFileName, setOutputFileName] = useState<string>('');
   const [outputFileSize, setOutputFileSize] = useState<number | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const ffmpegRef = useRef<FFmpeg | null>(null);
+  const ffmpegRef    = useRef<FFmpeg | null>(null);
+  const videoRef     = useRef<HTMLVideoElement>(null);
 
-  // Auth & Paywall State
-  const [user, setUser] = useState<any>(null);
-  const supabase = createClient();
+  const [user, setUser]               = useState<any>(null);
+  const supabase                      = createClient();
   const { data: credits, refetch: refetchCredits } = useCredits(user?.id);
   const { data: anonStatus, isLoading: isAnonLoading } = useAnonStatus();
-  const markAnonUsed = useMarkAnonUsed();
-  const decrementCredits = useDecrementCredits();
+  const markAnonUsed                  = useMarkAnonUsed();
+  const decrementCredits              = useDecrementCredits();
 
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [isAuthModalOpen, setIsAuthModalOpen]       = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
-  const [isDemoModalOpen, setIsDemoModalOpen] = useState(true);
-  const [isSigningOut, setIsSigningOut] = useState(false);
-  const [isClickingUpload, setIsClickingUpload] = useState(false);
+  const [isDemoModalOpen, setIsDemoModalOpen]       = useState(true);
+  const [isSigningOut, setIsSigningOut]             = useState(false);
+  const [isClickingUpload, setIsClickingUpload]     = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
-      const currentUser = session?.user ?? null;
-      setUser(currentUser);
+      setUser(session?.user ?? null);
     });
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      const currentUser = session?.user ?? null;
-      setUser(currentUser);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
     });
-
     return () => subscription.unsubscribe();
   }, [supabase]);
 
-  useEffect(() => {
-    if (status === 'processing') {
-      if (progress === 0) setProgressLabel('Allocating WASM Memory...');
-      else if (progress < 15) setProgressLabel('Analyzing Source Media...');
-      else if (progress < 85) setProgressLabel('Transcoding Frames...');
-      else if (progress < 99) setProgressLabel('Muxing MP4 Container...');
-      else setProgressLabel('Finalizing Video Object...');
-    }
-  }, [progress, status]);
+  const progressLabel = status !== 'processing' ? '' :
+    progress === 0  ? 'Allocating WASM Memory...' :
+    progress < 15   ? 'Analyzing Source Media...' :
+    progress < 85   ? 'Transcoding Frames...' :
+    progress < 99   ? 'Muxing MP4 Container...' :
+                      'Finalizing Video Object...';
 
   useEffect(() => {
     const loadFFmpeg = async () => {
       setStatus("loading_ffmpeg");
       try {
         const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.10/dist/umd';
-        const ffmpeg = new FFmpeg();
+        const ffmpeg  = new FFmpeg();
         ffmpegRef.current = ffmpeg;
-
         ffmpeg.on('progress', ({ progress }) => {
-          // ffmpeg.wasm progress goes from 0 to 1
           setProgress(Math.round(progress * 100));
         });
-
         await ffmpeg.load({
-          coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+          coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`,   'text/javascript'),
           wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
         });
-
         setStatus("idle");
       } catch (err: any) {
         console.error("FFmpeg Load Error:", err);
@@ -98,38 +161,70 @@ export default function Home() {
         setStatus("error");
       }
     };
-
     loadFFmpeg();
   }, []);
 
   useEffect(() => {
+    if (!file || !ffmpegRef.current) return;
+
+    const detect = async () => {
+      const ffmpeg = ffmpegRef.current!;
+      setIsDetectingFps(true);
+
+      const ext       = file.name.substring(file.name.lastIndexOf('.'));
+      const probeName = `probe${ext}`;
+      let   fps: number | null = null;
+
+      const logHandler = ({ message }: { message: string }) => {
+        if (fps) return;
+        const m = message.match(/(\d+(?:\.\d+)?)\s+fps/);
+        if (m) fps = Math.round(parseFloat(m[1]));
+      };
+
+      ffmpeg.on('log', logHandler);
+      try {
+        await ffmpeg.writeFile(probeName, await fetchFile(file));
+        await ffmpeg.exec(['-i', probeName]);
+      } catch {
+        // FFmpeg exits non-zero when no output is given — that's expected.
+        // Stream info is emitted to the log before the error.
+      } finally {
+        ffmpeg.off('log', logHandler);
+        try { await ffmpeg.deleteFile(probeName); } catch {}
+      }
+
+      if (fps && fps > 0) {
+        setDetectedFps(fps);
+        setTargetFps((prev) => Math.min(prev, fps!));
+      }
+      setIsDetectingFps(false);
+    };
+
+    detect();
+  }, [file]);
+
+  useEffect(() => {
     document.body.style.overflow = isDemoModalOpen ? 'hidden' : 'auto';
-  }, [isDemoModalOpen])
+  }, [isDemoModalOpen]);
 
   const cleanupCurrentSession = () => {
     if (uploadedPath) URL.revokeObjectURL(uploadedPath);
-    if (outputPath) URL.revokeObjectURL(outputPath);
+    if (outputPath)   URL.revokeObjectURL(outputPath);
   };
 
   const handleUploadClick = async () => {
     if (isDemoModalOpen) return;
     setIsClickingUpload(true);
-
     try {
       if (!user) {
         if (isAnonLoading) return;
-        if (anonStatus?.used) {
-          setIsAuthModalOpen(true);
-          return;
-        }
+        if (anonStatus?.used) { setIsAuthModalOpen(true); return; }
       } else if (credits !== undefined && credits !== null && credits <= 0) {
         setIsPaymentModalOpen(true);
         return;
       }
-
       fileInputRef.current?.click();
     } finally {
-      // Small timeout to ensure the user sees the feedback before the browser might pause execution for the file picker
       setTimeout(() => setIsClickingUpload(false), 1000);
     }
   };
@@ -137,20 +232,13 @@ export default function Home() {
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const selectedFile = e.target.files[0];
-
-      // 100MB limit
-      if (selectedFile.size > 100 * 1024 * 1024) {
-        setErrorMessage("File exceeds 100MB limit.");
-        return;
-      }
-
-      if (!selectedFile.type.startsWith('video/')) {
-        setErrorMessage("Please select a valid video file.");
-        return;
-      }
-
+      if (selectedFile.size > 100 * 1024 * 1024) { setErrorMessage("File exceeds 100MB limit."); return; }
+      if (!selectedFile.type.startsWith('video/'))  { setErrorMessage("Please select a valid video file."); return; }
       setFile(selectedFile);
       setErrorMessage('');
+      setDetectedFps(null);
+      setTargetFps(6);
+      setVideoMeta(null);
       cleanupCurrentSession();
       setUploadedPath(URL.createObjectURL(selectedFile));
       setFileName(selectedFile.name);
@@ -162,22 +250,12 @@ export default function Home() {
     if (!file || !fileName || !ffmpegRef.current) return;
 
     if (!user) {
-      // Consume anonymous usage via API securely before processing
-      try {
-        await markAnonUsed.mutateAsync();
-      } catch (err: any) {
-        setErrorMessage(err.message);
-        return;
-      }
+      try { await markAnonUsed.mutateAsync(); }
+      catch (err: any) { setErrorMessage(err.message); return; }
     } else {
-      // Deduct credits via API securely before processing
-      try {
-        await decrementCredits.mutateAsync();
-      } catch (err: any) {
-        if (err.message === 'out_of_credits') {
-          setIsPaymentModalOpen(true);
-          return;
-        }
+      try { await decrementCredits.mutateAsync(); }
+      catch (err: any) {
+        if (err.message === 'out_of_credits') { setIsPaymentModalOpen(true); return; }
         setErrorMessage(err.message);
         return;
       }
@@ -185,47 +263,66 @@ export default function Home() {
 
     setStatus("processing");
     setProgress(0);
-    setProgressLabel('Allocating WASM Memory...');
     setErrorMessage('');
 
     try {
-      const ffmpeg = ffmpegRef.current;
-      const ext = fileName.substring(fileName.lastIndexOf('.'));
+      const ffmpeg    = ffmpegRef.current;
+      const ext       = fileName.substring(fileName.lastIndexOf('.'));
       const inputName = `input${ext}`;
       const outputName = 'output.mp4';
 
       await ffmpeg.writeFile(inputName, await fetchFile(file));
-      setProgressLabel('Booting Transcoding Engine...');
+
+      const filters: string[] = [`fps=${targetFps}`];
+
+      if (aspectRatio !== 'original' && videoRef.current) {
+        const [ratioW, ratioH] = aspectRatio.split(':').map(Number);
+        const sourceW = videoRef.current.videoWidth;
+        const sourceH = videoRef.current.videoHeight;
+
+        if (sourceW && sourceH) {
+          const sourceRatio = sourceW / sourceH;
+          const targetRatio = ratioW / ratioH;
+          let cropW: number, cropH: number;
+
+          if (sourceRatio > targetRatio) {
+            cropH = sourceH;
+            cropW = Math.round(sourceH * targetRatio);
+            if (cropW % 2 !== 0) cropW -= 1;
+          } else {
+            cropW = sourceW;
+            cropH = Math.round(sourceW / targetRatio);
+            if (cropH % 2 !== 0) cropH -= 1;
+          }
+
+          filters.push(`crop=${cropW}:${cropH}`);
+        }
+      }
 
       await ffmpeg.exec([
         '-y',
         '-i', inputName,
-        '-vf', `fps=${targetFps}`,
+        '-vf', filters.join(','),
         '-c:v', 'libx264',
+        '-crf', String(QUALITY_CRF[quality]),
         '-pix_fmt', 'yuv420p',
         '-an',
-        outputName
+        outputName,
       ]);
 
-      setProgressLabel('Extracting Output Stream...');
-
       const data = await ffmpeg.readFile(outputName);
-
-      setProgressLabel('Constructing Output Blob...');
-      // Depending on version, data could be Uint8Array or Buffer
       // @ts-ignore
       const videoBlob = new Blob([data.buffer || data], { type: 'video/mp4' });
       const url = URL.createObjectURL(videoBlob);
-
       setOutputPath(url);
 
-      // Construct output filename
-      const baseName = fileName.lastIndexOf('.') > 0 ? fileName.substring(0, fileName.lastIndexOf('.')) : fileName;
-      setOutputFileName(`${baseName}_${targetFps}fps.mp4`);
+      const baseName   = fileName.lastIndexOf('.') > 0 ? fileName.substring(0, fileName.lastIndexOf('.')) : fileName;
+      const ratioTag   = aspectRatio !== 'original' ? `_${aspectRatio.replace(':', 'x')}` : '';
+      const qualityTag = `_${QUALITY_LABELS[quality].toLowerCase()}`;
+      setOutputFileName(`${baseName}_${targetFps}fps${ratioTag}${qualityTag}.mp4`);
 
       // @ts-ignore
       setOutputFileSize(data.byteLength || data.length);
-
       setStatus("done");
 
     } catch (err: any) {
@@ -237,6 +334,42 @@ export default function Home() {
 
   return (
     <>
+      <style>{`
+        .custom-slider {
+          -webkit-appearance: none;
+          appearance: none;
+          height: 4px;
+          border-radius: 9999px;
+          outline: none;
+          cursor: pointer;
+          width: 100%;
+        }
+        .custom-slider::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 18px;
+          height: 18px;
+          border-radius: 50%;
+          background: #00f0ff;
+          cursor: pointer;
+          box-shadow: 0 0 10px rgba(0,240,255,0.6);
+          border: 2px solid rgba(0,240,255,0.3);
+          transition: box-shadow 0.2s;
+        }
+        .custom-slider::-webkit-slider-thumb:hover {
+          box-shadow: 0 0 18px rgba(0,240,255,0.95);
+        }
+        .custom-slider::-moz-range-thumb {
+          width: 18px;
+          height: 18px;
+          border-radius: 50%;
+          background: #00f0ff;
+          cursor: pointer;
+          box-shadow: 0 0 10px rgba(0,240,255,0.6);
+          border: 2px solid rgba(0,240,255,0.3);
+        }
+      `}</style>
+
       <AuthModal
         isOpen={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
@@ -265,14 +398,12 @@ export default function Home() {
               <div className="flex items-center justify-between w-full">
                 <div className='mr-auto flex items-center gap-2'>
                   <span className="text-xs text-zinc-500">{user.email}</span>
-
                   {credits !== null && (
                     <span className="px-3 py-1 text-xs font-bold rounded-full bg-neon-cyan/20 text-neon-cyan border border-neon-cyan/30">
                       {credits} Credits
                     </span>
                   )}
                 </div>
-
                 <button
                   onClick={async () => {
                     setIsSigningOut(true);
@@ -323,7 +454,6 @@ export default function Home() {
             Locally transcode video files to a custom frame rate using WebAssembly. Secure, fast, and completely client-side.
           </motion.p>
 
-          {/* Privacy Shield */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -341,7 +471,6 @@ export default function Home() {
           </div>
         )}
 
-        {/* Loading Engine State */}
         {status === "loading_ffmpeg" && (
           <div className="flex flex-col items-center justify-center py-20 gap-4">
             <Loader2 className="w-12 h-12 animate-spin text-neon-cyan" />
@@ -349,7 +478,6 @@ export default function Home() {
           </div>
         )}
 
-        {/* Upload Section */}
         {!file && status === "idle" && (
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
@@ -387,16 +515,14 @@ export default function Home() {
           </motion.div>
         )}
 
-        {/* Main Workspace */}
         {file && uploadedPath && status !== "loading_ffmpeg" && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             className="flex flex-col gap-8"
           >
-            {/* Videos Grid */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              {/* Left Column: Original */}
+              {/* Left Column: Source + Controls */}
               <div className="flex flex-col gap-4">
                 <div className="flex items-center justify-between">
                   <h2 className="text-xl font-semibold flex items-center gap-2">
@@ -426,54 +552,147 @@ export default function Home() {
                   </div>
                 </div>
 
-                <div className="glass-panel rounded-xl overflow-hidden aspect-video relative group">
+                <div className="glass-panel rounded-xl overflow-hidden aspect-video relative">
                   <video
+                    ref={videoRef}
                     src={uploadedPath}
                     controls
                     controlsList="nodownload"
                     onContextMenu={(e) => e.preventDefault()}
+                    onLoadedMetadata={() => {
+                      const v = videoRef.current;
+                      if (v) setVideoMeta({ duration: v.duration, width: v.videoWidth, height: v.videoHeight });
+                    }}
                     className="w-full h-full object-contain bg-black/50"
                   />
                 </div>
 
-                {/* Horizontal Controls */}
-                <div className="glass-panel p-6 rounded-xl flex flex-row items-end justify-between gap-4 mt-auto">
-                  <div className="flex flex-col gap-2 shrink-0">
-                    <label className="text-xs font-medium text-zinc-400 flex items-center gap-2">
-                      <Settings2 className="w-4 h-4 text-neon-cyan" />
-                      Target FPS
-                    </label>
+                {/* Expanded Controls Panel */}
+                <div className="glass-panel p-6 rounded-xl flex flex-col gap-6">
+
+                  {/* FPS Slider */}
+                  <div className="flex flex-col gap-3">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-medium text-zinc-400 flex items-center gap-2">
+                        <Settings2 className="w-4 h-4 text-neon-cyan" />
+                        Target FPS
+                        {isDetectingFps && <Loader2 className="w-3 h-3 animate-spin text-zinc-500" />}
+                      </label>
+                      <span className="text-2xl font-mono font-bold text-neon-cyan tabular-nums">{targetFps}</span>
+                    </div>
                     <input
-                      type="number"
-                      min={1}
-                      max={60}
+                      type="range"
+                      min={3}
+                      max={detectedFps ?? 60}
+                      step={1}
                       value={targetFps}
+                      disabled={isDetectingFps}
                       onChange={(e) => setTargetFps(Number(e.target.value))}
-                      className="w-24 h-14 bg-black/40 border border-[var(--border)] rounded-lg px-3 focus:outline-none focus:border-neon-cyan transition-colors text-lg text-center font-mono"
+                      className="custom-slider disabled:opacity-40"
+                      style={sliderTrackStyle(targetFps, 3, detectedFps ?? 60)}
                     />
+                    <div className="flex justify-between text-xs text-zinc-600 font-mono">
+                      <span>3</span>
+                      {detectedFps
+                        ? <span className="text-zinc-500">{detectedFps} fps (original)</span>
+                        : <span>60</span>
+                      }
+                    </div>
                   </div>
 
-                  <div className="flex-1 w-full flex flex-col items-center">
-                    <button
-                      onClick={handleConvert}
-                      disabled={status === "processing" || markAnonUsed.isPending || decrementCredits.isPending}
-                      className="group relative flex items-center gap-3 px-10 py-5 bg-white text-black font-black rounded-2xl hover:scale-105 active:scale-95 transition-all disabled:opacity-50 disabled:hover:scale-100 disabled:active:scale-100 shadow-[0_0_20px_rgba(255,255,255,0.3)]"
-                    >
-                      {status === "processing" || markAnonUsed.isPending || decrementCredits.isPending ? (
-                        <>
-                          <Loader2 className="w-6 h-6 animate-spin" />
-                          <span>{status === "processing" ? "Converting..." : "Verifying..."}</span>
-                        </>
-                      ) : (
-                        <>
-                          <Play className="w-6 h-6" fill="currentColor" />
-                          <span>Begin Transcoding</span>
-                        </>
-                      )}
-                    </button>
+                  {/* Quality Slider */}
+                  <div className="flex flex-col gap-3">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-medium text-zinc-400">Compression Quality</label>
+                      <span
+                        className="text-sm font-bold tabular-nums"
+                        style={{ color: quality === 2 ? '#00f0ff' : quality === 1 ? '#fbbf24' : '#f87171' }}
+                      >
+                        {QUALITY_LABELS[quality]}
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={2}
+                      step={1}
+                      value={quality}
+                      onChange={(e) => setQuality(Number(e.target.value))}
+                      className="custom-slider"
+                      style={sliderTrackStyle(quality, 0, 2)}
+                    />
+                    <div className="flex justify-between text-xs text-zinc-600">
+                      <span>Low</span>
+                      <span>Medium</span>
+                      <span>High</span>
+                    </div>
                   </div>
+
+                  {/* Aspect Ratio Grid */}
+                  <div className="flex flex-col gap-3">
+                    <label className="text-xs font-medium text-zinc-400">Aspect Ratio</label>
+                    <div className="grid grid-cols-4 gap-2">
+                      {ASPECT_RATIOS.map((ratio) => {
+                        const isSelected = aspectRatio === ratio.id;
+                        return (
+                          <button
+                            key={ratio.id}
+                            onClick={() => setAspectRatio(ratio.id)}
+                            className={`flex flex-col items-center justify-center gap-2 py-3 px-2 rounded-lg border transition-all ${
+                              isSelected
+                                ? 'border-neon-cyan bg-neon-cyan/10 shadow-[0_0_12px_rgba(0,240,255,0.15)]'
+                                : 'border-zinc-800 bg-zinc-900/50 hover:border-zinc-600'
+                            }`}
+                          >
+                            <div className="flex items-center justify-center w-10 h-10">
+                              {ratio.id === 'original' ? (
+                                <div
+                                  className="w-8 h-8 rounded-sm border-2 border-dashed flex items-center justify-center transition-colors"
+                                  style={{ borderColor: isSelected ? '#00f0ff' : '#3f3f46' }}
+                                >
+                                  <span className="text-xs font-bold" style={{ color: isSelected ? '#00f0ff' : '#52525b' }}>
+                                    —
+                                  </span>
+                                </div>
+                              ) : (
+                                <AspectRatioRect w={ratio.w} h={ratio.h} selected={isSelected} />
+                              )}
+                            </div>
+                            <span
+                              className="text-xs font-mono font-bold"
+                              style={{ color: isSelected ? '#00f0ff' : '#71717a' }}
+                            >
+                              {ratio.label}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Transcoding Button */}
+                  <button
+                    onClick={handleConvert}
+                    disabled={status === "processing" || markAnonUsed.isPending || decrementCredits.isPending}
+                    className="group relative flex items-center justify-center gap-3 w-full px-10 py-5 bg-white text-black font-black rounded-2xl hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50 disabled:hover:scale-100 disabled:active:scale-100 shadow-[0_0_20px_rgba(255,255,255,0.3)]"
+                  >
+                    {status === "processing" || markAnonUsed.isPending || decrementCredits.isPending ? (
+                      <>
+                        <Loader2 className="w-6 h-6 animate-spin" />
+                        <span>{status === "processing" ? "Converting..." : "Verifying..."}</span>
+                      </>
+                    ) : (
+                      <>
+                        <Play className="w-6 h-6" fill="currentColor" />
+                        <span>Begin Transcoding</span>
+                      </>
+                    )}
+                  </button>
                 </div>
-                <p className="text-xs text-zinc-500 text-center -mt-2">Note: Audio tracks are automatically stripped to prevent frame synchronization anomalies.</p>
+
+                <p className="text-xs text-zinc-500 text-center -mt-2">
+                  Note: Audio tracks are automatically stripped to prevent frame synchronization anomalies.
+                </p>
               </div>
 
               {/* Right Column: Output */}
@@ -483,23 +702,50 @@ export default function Home() {
                     <ArrowRight className="w-5 h-5 text-neon-yellow" />
                     Transcoded Output
                   </h2>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap justify-end">
                     {outputFileSize && (
                       <span className="px-3 py-1 text-xs rounded-full bg-zinc-800 text-zinc-300">
                         {(outputFileSize / (1024 * 1024)).toFixed(2)} MB
                       </span>
                     )}
                     {status === "done" && (
-                      <span className="px-3 py-1 text-xs rounded-full bg-neon-cyan/20 text-neon-cyan border border-neon-cyan/30">
-                        {targetFps} FPS
-                      </span>
+                      <>
+                        <span className="px-3 py-1 text-xs rounded-full bg-neon-cyan/20 text-neon-cyan border border-neon-cyan/30">
+                          {targetFps} FPS
+                        </span>
+                        <span
+                          className="px-3 py-1 text-xs rounded-full border font-bold"
+                          style={{
+                            color: quality === 2 ? '#00f0ff' : quality === 1 ? '#fbbf24' : '#f87171',
+                            borderColor: quality === 2 ? 'rgba(0,240,255,0.3)' : quality === 1 ? 'rgba(251,191,36,0.3)' : 'rgba(248,113,113,0.3)',
+                            backgroundColor: quality === 2 ? 'rgba(0,240,255,0.1)' : quality === 1 ? 'rgba(251,191,36,0.1)' : 'rgba(248,113,113,0.1)',
+                          }}
+                        >
+                          {QUALITY_LABELS[quality]}
+                        </span>
+                        {aspectRatio !== 'original' && (
+                          <span className="px-3 py-1 text-xs rounded-full bg-neon-yellow/20 text-neon-yellow border border-neon-yellow/30">
+                            {aspectRatio}
+                          </span>
+                        )}
+                      </>
                     )}
                   </div>
                 </div>
 
                 <div className="glass-panel rounded-xl overflow-hidden aspect-video relative flex items-center justify-center p-4">
                   {status === "idle" || status === "error" ? (
-                    <p className="text-zinc-600 font-medium text-center">Awaiting source media...</p>
+                    <div className="flex flex-col items-center gap-3 text-center">
+                      <p className="text-zinc-600 font-medium">Awaiting transcoding...</p>
+                      {estimatedSizeMB !== null && (
+                        <div className="flex flex-col items-center gap-1">
+                          <span className="text-3xl font-mono font-bold text-neon-cyan">
+                            ~{estimatedSizeMB < 1 ? `${(estimatedSizeMB * 1024).toFixed(0)} KB` : `${estimatedSizeMB.toFixed(1)} MB`}
+                          </span>
+                          <span className="text-xs text-zinc-500 uppercase tracking-widest">estimated output size</span>
+                        </div>
+                      )}
+                    </div>
                   ) : status === "processing" ? (
                     <div className="flex flex-col items-center justify-center w-full max-w-xs mx-auto gap-4">
                       <div className="w-16 h-16 rounded-full border-4 border-zinc-800 border-t-neon-cyan animate-spin mb-2" />
@@ -508,7 +754,7 @@ export default function Home() {
                         <div
                           className="bg-gradient-to-r from-neon-cyan to-neon-yellow h-full transition-all duration-300"
                           style={{ width: `${progress}%` }}
-                        ></div>
+                        />
                       </div>
                       <p className="text-xs text-zinc-400 font-mono text-center">{progress}% Complete</p>
                     </div>
@@ -523,7 +769,6 @@ export default function Home() {
                   ) : null}
                 </div>
 
-                {/* Download Action */}
                 <AnimatePresence>
                   {status === "done" && outputPath && (
                     <motion.div
@@ -547,6 +792,7 @@ export default function Home() {
           </motion.div>
         )}
       </main>
+
       <footer className='p-8 max-w-xl mx-auto flex flex-col gap-12'>
         <motion.div
           initial={{ opacity: 0 }}

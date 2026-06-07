@@ -52,8 +52,7 @@ export function DemoModal({
 
               <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl shadow-2xl">
                 <video
-                  // TODO: Add CDN video link
-                  src=""
+                  src="https://cdn.servatom.com/ChronoFrame/Demo.mp4"
                   autoPlay
                   loop
                   playsInline
