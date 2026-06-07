@@ -25,12 +25,12 @@ ChronoFrame ships the real FFmpeg, compiled to [WebAssembly](https://webassembly
 
 ### 💸 Benefits that fall out of the design
 
-| Benefit | How WebAssembly enables it |
-|---|---|
+| Benefit                      | How WebAssembly enables it                                                                                            |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | **Zero server compute cost** | Your device does the transcoding, so the app stays cheap to run — and that's passed on as a fair, credit-based price. |
-| **Zero storage cost & risk** | No files stored server-side means no breach surface and no storage bills. |
-| **Instant start** | No upload wait before processing begins. |
-| **Scales effortlessly** | Each user brings their own compute, so the app never bottlenecks. |
+| **Zero storage cost & risk** | No files stored server-side means no breach surface and no storage bills.                                             |
+| **Instant start**            | No upload wait before processing begins.                                                                              |
+| **Scales effortlessly**      | Each user brings their own compute, so the app never bottlenecks.                                                     |
 
 ---
 
@@ -55,10 +55,10 @@ Auth is handled by [Supabase](https://supabase.com/):
 
 ChronoFrame uses a **credit-based, pay-as-you-go** model (no subscription) powered by [Razorpay](https://razorpay.com/):
 
-| Pack | Credits | Price |
-|---|---|---|
-| **Starter Pack** | 5 credits | ₹199 |
-| **Pro Pack** | 10 credits | ₹299 |
+| Pack             | Credits    | Price |
+| ---------------- | ---------- | ----- |
+| **Starter Pack** | 5 credits  | ₹199  |
+| **Pro Pack**     | 10 credits | ₹299  |
 
 - **1 credit = 1 conversion.**
 - **Credits never expire.**
@@ -97,7 +97,7 @@ Create a `.env.local` with:
 ```bash
 # Supabase
 NEXT_PUBLIC_SUPABASE_URL=
-NEXT_PUBLIC_SUPABASE_ANON_KEY=
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
 
 # Razorpay
